@@ -154,6 +154,7 @@ if __name__ == "__main__":
                     all_instance_map[satellite_id].instance_id,
                     address_info1=address1,
                     address_info2=address2,
+                    {PARAMETER_KEY_BANDWIDTH: 666666}
                 )
                 gs_config = genenrate_config(cli,ground_station.node_index,ground_station.instance_id)
                 # print(gs_config)
