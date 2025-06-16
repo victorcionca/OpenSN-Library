@@ -4,8 +4,8 @@ from opensn.model.position import Position
 from opensn.const.dict_fields import PARAMETER_KEY_CONNECT,PARAMETER_KEY_DELAY,PARAMETER_KEY_BANDWIDTH,PARAMETER_KEY_LOSS
 from opensn.model.link import LinkBase
 from opensn.utils.tools import dec2ra
-from config import ADDR,PORT
-from datetime import datetime
+from config import ADDR,PORT,STARTTIME
+from datetime import datetime, timedelta
 from trajectory import calculate_postion,distance_meter,select_closest_satellite,get_propagation_delay_s
 from instance_types import TYPE_GROUND_STATION, TYPE_SATELLITE, EX_ORBIT_INDEX,EX_ALTITUDE_KEY,EX_LATITUDE_KEY,EX_LONGITUDE_KEY, EX_AREA_KEY
 from address_type import LINK_V4_ADDR_KEY
@@ -50,6 +50,11 @@ if __name__ == "__main__":
     
     cli = EmulatorOperator(ADDR,PORT)
 
+    if STARTTIME == "":
+        time_now = datetime.now()
+    else:
+        time_now = datetime.strptime(STARTTIME, "%d/%m/%Y;%H:%M:%S")
+
     # Create Emulator Operator
     while True:
         node_list = cli.get_node_map()
@@ -90,7 +95,8 @@ if __name__ == "__main__":
                 
 
         position_map: dict[str,Position] = {"":Position()}
-        time_now = datetime.now()
+        if STARTTIME == "":
+            time_now = datetime.now()
         for instance_id,instance_info in all_instance_map.items():
             if instance_info.start:
                 new_postion = calculate_postion(instance_info,time_now)
@@ -203,3 +209,5 @@ if __name__ == "__main__":
             config_map = genenrate_config(cli,instance_info.node_index,instance_id)
             cli.put_instance_config_if_not_exist(instance_info.node_index,instance_id,json.dumps(config_map))
         sleep(step_second)
+        if STARTTIME == "":
+            time_now += timedelta(seconds=step_second)
