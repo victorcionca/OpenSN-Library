@@ -76,21 +76,30 @@ def area2line(y: int, x: int, x_limit: int, y_limit: int) -> int:
     return y_true * x_limit + x_true
 
 
-def generate_tle(orbit_num: int, orbit_satellite_num: int, all_start_latitude, all_start_longitude, orbit_angle, delta_percent, period) -> (list, dict):
+def generate_tle(orbit_num: int, orbit_satellite_num: int, all_start_latitude, all_start_longitude, orbit_angle, delta_percent, period, longitude_delta=0, start_date="") -> (list, dict):
     satellites = []
     index_2d = []
     topo = {}
     freq = 1 / period
     line_1 = "1 00000U 23666A   %02d%012.8f  .00000000  00000-0 00000000 0 0000"
     line_2 = "2 00000  %02.4f %08.4f 0000011   0.0000 %8.4f %11.8f00000"
-    year2, day = get_year_day(datetime.now())
+    if start_date == "":
+        year2, day = get_year_day(datetime.now())
+    else:
+        start_date = datetime.strptime(start_date, "%d-%m-%Y")
+        year2 = start_date.year % 100
+        day = start_date.timetuple().tm_yday
     total_longitude = 180
     if abs(orbit_angle) < 80:
         total_longitude = 360
     delta = 360 / orbit_satellite_num * delta_percent
     for i in range(orbit_num):
         start_latitude = all_start_latitude + delta * i
-        start_longitude = all_start_longitude + total_longitude * i / orbit_num
+        if longitude_delta == 0:
+            start_longitude = all_start_longitude + total_longitude * i / orbit_num
+        else:
+            start_longitude = all_start_longitude + longitude_delta * i
+        print(f"Start longitude for orbit {i}: {start_longitude}. {all_start_longitude} {longitude_delta}")
         index_1d = []
         for j in range(orbit_satellite_num):
             this_latitude = start_latitude + 360 * j / orbit_satellite_num
@@ -120,6 +129,57 @@ def generate_tle(orbit_num: int, orbit_satellite_num: int, all_start_latitude, a
 
 area_size_list = ["1x9","1x18","2x9","2x18","4x9","4x18","8x9","8x18"]
 
+def generate_topology(start_date, orbit_angle, start_longitude, longitude_delta, num_orbits, sat_per_orbit, outfile):
+    """
+    Params
+    ======
+    start_date:         Start date for the satellite constellation. %d-%m-%Y.
+    orbit_angle:        The inclination of the orbit
+    start_longitude:    Longitude of the first orbital plane
+    longitude_delta:    Angle between orbital planes; 0 means evenly spaced
+    num_orbits:         Number of orbital planes
+    sat_per_orbit:      Number of satellites per orbit
+    outfile:            Name of topology file to write
+    """
+    grid_x = num_orbits
+    grid_y = sat_per_orbit
+    start_latitude = 0
+    delta_percent = 1 / grid_x
+    period = 1 / 13.1507
+    emu_config :dict[str,EmulationTypeConfig] = {
+        "Satellite": EmulationTypeConfig("docker.io/realssd/satellite-router-area", {}, "50M", "128M").__dict__
+    }
+    sat, topos = generate_tle(grid_x, grid_y, start_latitude, start_longitude,
+                              orbit_angle, delta_percent, period,
+                              longitude_delta, start_date)
+    node_grid = []
+    for i in range(grid_x):
+        array = []
+        for j in range(grid_y):
+            array.append(TopologyInstance("Satellite", {
+                EX_TLE0_KEY: sat[area2line(i, j, grid_y, grid_x)][0],
+                EX_TLE1_KEY: sat[area2line(i, j, grid_y, grid_x)][1],
+                EX_TLE2_KEY: sat[area2line(i, j, grid_y, grid_x)][2],
+                EX_AREA_KEY: "0.0.0.0",
+                EX_ORBIT_INDEX: str(i),
+                EX_SATELLITE_INDEX: str(j),
+            }))
+        node_grid.append(array)
+    links = []
+    for l0_str,l1_list in topos.items():
+        for l1 in l1_list:
+            links.append(TopologyLink("vlink", [int(l0_str),l1],{},[{},{}],{}))
+    topology_config = TopologyConfig()
+    for i in range(grid_x):
+        for j in range(grid_y):
+            topology_config.instances.append(node_grid[i][j])
+    for link in links:
+        topology_config.links.append(link)
+    
+    topology_config_file = open(outfile, "w")
+    topology_config_file.write(topology_config.toJson())
+    topology_config_file.close()
+
 if __name__ == "__main__":
     grid_x = 40
     grid_y = 18
@@ -134,7 +194,7 @@ if __name__ == "__main__":
         emu_config :dict[str,EmulationTypeConfig] = {
             "Satellite": EmulationTypeConfig("docker.io/realssd/satellite-router-area", {}, "50M", "128M").__dict__
         }
-        sat, topos = generate_tle(grid_x, grid_y, start_longitude, start_latitude, orbit_angle, delta_percent, period)
+        sat, topos = generate_tle(grid_x, grid_y, start_latitude, start_longitude, orbit_angle, delta_percent, period)
         node_grid = []
         for i in range(grid_x):
             array = []
