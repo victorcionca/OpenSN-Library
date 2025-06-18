@@ -50,10 +50,8 @@ if __name__ == "__main__":
     
     cli = EmulatorOperator(ADDR,PORT)
 
-    if STARTTIME == "":
-        time_now = datetime.now()
-    else:
-        time_now = datetime.strptime(STARTTIME, "%d/%m/%Y;%H:%M:%S")
+    if STARTTIME != "":
+        time_now = datetime.strptime(STARTTIME, "%Y-%m-%d-%H:%M:%S")
 
     # Create Emulator Operator
     while True:
@@ -97,6 +95,7 @@ if __name__ == "__main__":
         position_map: dict[str,Position] = {"":Position()}
         if STARTTIME == "":
             time_now = datetime.now()
+        print(f"[{time_now} Update satellite positions")
         for instance_id,instance_info in all_instance_map.items():
             if instance_info.start:
                 new_postion = calculate_postion(instance_info,time_now)
@@ -160,7 +159,7 @@ if __name__ == "__main__":
                     all_instance_map[satellite_id].instance_id,
                     address_info1=address1,
                     address_info2=address2,
-                    {PARAMETER_KEY_BANDWIDTH: 666666}
+                    init_parameter={PARAMETER_KEY_BANDWIDTH: 1000000000}
                 )
                 gs_config = genenrate_config(cli,ground_station.node_index,ground_station.instance_id)
                 # print(gs_config)
@@ -199,7 +198,7 @@ if __name__ == "__main__":
                 )
                 delay = int(get_propagation_delay_s(distance)*1000000)
                 link_info.parameter[PARAMETER_KEY_DELAY] = delay
-                link_info.parameter[PARAMETER_KEY_BANDWIDTH] = 1000000
+                link_info.parameter[PARAMETER_KEY_BANDWIDTH] = 1000000000
                 link_info.parameter[PARAMETER_KEY_LOSS] = 150
                 cli.put_link_parameter(link_info.node_index,link_info.link_id,link_info.parameter)
                 
@@ -209,5 +208,5 @@ if __name__ == "__main__":
             config_map = genenrate_config(cli,instance_info.node_index,instance_id)
             cli.put_instance_config_if_not_exist(instance_info.node_index,instance_id,json.dumps(config_map))
         sleep(step_second)
-        if STARTTIME == "":
+        if STARTTIME != "":
             time_now += timedelta(seconds=step_second)
