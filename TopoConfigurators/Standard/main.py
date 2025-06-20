@@ -6,8 +6,8 @@ from opensn.model.link import LinkBase
 from opensn.utils.tools import dec2ra
 import config
 from datetime import datetime, timedelta
-from trajectory import calculate_postion,distance_meter,select_closest_satellite,get_propagation_delay_s, get_orbital_period, get_ra,check_orbit_has_coverage
-from instance_types import TYPE_GROUND_STATION, TYPE_SATELLITE, EX_ORBIT_INDEX,EX_ALTITUDE_KEY,EX_LATITUDE_KEY,EX_LONGITUDE_KEY, EX_AREA_KEY, EX_TLE0_KEY
+import trajectory
+from instance_types import TYPE_GROUND_STATION, TYPE_SATELLITE, EX_ORBIT_INDEX,EX_ALTITUDE_KEY,EX_LATITUDE_KEY,EX_LONGITUDE_KEY, EX_AREA_KEY, EX_TLE0_KEY, EX_TLE2_KEY
 from address_type import LINK_V4_ADDR_KEY
 from time import sleep
 from address_allocator import alloc_ipv4,format_ipv4
@@ -43,6 +43,23 @@ def genenrate_config(cli:EmulatorOperator,node_index:int,instance_id:str):
         if another_instance_info.type == TYPE_SATELLITE:
             config_map["end_infos"][k]['area'] = another_instance_info.extra[EX_AREA_KEY]
     return config_map
+
+def update_orbit_longitude(cli:EmulatorOperator, instances:list[Instance], orbit_id:int, new_longitude:int):
+    """
+    Change the TLE of the instance to the new longitude and update the
+    instance configuration with the data
+    """
+    for inst in instances:
+        if inst.type != TYPE_SATELLITE: continue
+        name = inst.extra[EX_TLE0_KEY]
+        if int(name.split('_')[1]) == orbit_id:
+            # TODO remove links
+            # Change to the new longitude
+            print(f"Before {inst.extra[EX_TLE2_KEY]}")
+            trajectory.satellite_change_longitude(inst, new_longitude)
+            print(f"After  {inst.extra[EX_TLE2_KEY]}")
+            # Push the new instance to etcd
+            cli.put_instance(inst)
 
 if __name__ == "__main__":
 
@@ -113,23 +130,28 @@ if __name__ == "__main__":
             time_now = datetime.now()
         # ---- Bounding box implementation
         # If the distance between an orbit and a target point
-        # is greater than the bound threshold, remove and add another orbit.
+        # is greater than the bound threshold, move the orbit to the end.
+        # It is too resource intensive to remove all the satellite containers
+        # and spin a new set of them.
+        # Instead we will update the TLE of the satellites from the first
+        # orbit.
         if bound_threshold > 0 and bound_target is not None:
-            orbital_period = get_orbital_period(first_sat)
+            orbital_period = trajectory.get_orbital_period(first_sat)
             if time_now > orbit_time + timedelta(seconds=orbital_period):
                 orbit_time = time_now
-                if not check_orbit_has_coverage(first_sat, time_now, bound_target,
+                if not trajectory.check_orbit_has_coverage(first_sat, time_now, bound_target,
                                                 bound_threshold):
                     # TODO remove the first orbit
                     # TODO add a new orbit
-                    print(f"[{time_now}] Lost coverage")
+                    print(f"[{time_now}] Lost coverage. Update orbit")
+                    update_orbit_longitude(cli, all_instance_map.values(), 0, 285)
                 else:
                     print(f"[{time_now}] Still covered")
 
         print(f"[{time_now} Update satellite positions")
         for instance_id,instance_info in all_instance_map.items():
             if instance_info.start:
-                new_postion = calculate_postion(instance_info,time_now)
+                new_postion = trajectory.calculate_postion(instance_info,time_now)
                 cli.put_position(instance_id,new_postion)
             else:
                 new_postion = Position()
@@ -141,7 +163,7 @@ if __name__ == "__main__":
             if not ground_station.start:
                 continue
             gs_position = position_map[ground_station.instance_id]
-            satellite_id,change = select_closest_satellite(
+            satellite_id,change = trajectory.select_closest_satellite(
                 ground_station,
                 position_map,
                 all_instance_map
@@ -223,11 +245,11 @@ if __name__ == "__main__":
                     #         logger.info("disconnect %s"%link_id)
                     link_info.parameter[PARAMETER_KEY_CONNECT] = 1
 
-                distance = distance_meter(
+                distance = trajectory.distance_meter(
                     position_map[link_info.end_infos[0].instance_id],
                     position_map[link_info.end_infos[1].instance_id]
                 )
-                delay = int(get_propagation_delay_s(distance)*1000000)
+                delay = int(trajectory.get_propagation_delay_s(distance)*1000000)
                 link_info.parameter[PARAMETER_KEY_DELAY] = delay
                 link_info.parameter[PARAMETER_KEY_BANDWIDTH] = 1000000000
                 link_info.parameter[PARAMETER_KEY_LOSS] = 150

@@ -29,6 +29,32 @@ def get_ra(instance: Instance) -> float:
     )
     return ephem_obj.a_ra/(2*math.pi)*360
 
+def str_checksum(line: str) -> int:
+    sum_num = 0
+    for c in line:
+        if c.isdigit():
+            sum_num += int(c)
+        elif c == '-':
+            sum_num += 1
+    return sum_num % 10
+
+def satellite_change_longitude(inst: Instance, new_longitude:float):
+    # Get line 2 from TLE
+    inst_tle2 = inst.extra[EX_TLE2_KEY]
+    # Remove the checksum as it will be recomputed
+    inst_tle2 = inst_tle2[:-1]
+    inst_tle2_fields = inst_tle2.split()
+    # Rebuild the line
+    upd_line_2 = "2 00000  %02.4f %08.4f 0000011   0.0000 %8.4f %11.8f00000"%(
+                        float(inst_tle2_fields[2]),
+                        new_longitude,
+                        float(inst_tle2_fields[6]),
+                        float(inst_tle2_fields[7]))
+    # Recompute the checksum
+    chksum = str_checksum(upd_line_2)
+    upd_line_2 += str(chksum)
+    inst.extra[EX_TLE2_KEY] = upd_line_2
+
 def check_orbit_has_coverage(instance: Instance, time:datetime.datetime,
                              point:Position, distance: int) -> bool:
     """
