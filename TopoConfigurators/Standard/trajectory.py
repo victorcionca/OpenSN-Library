@@ -11,6 +11,51 @@ from opensn.model.instance import Instance
 def deg2rad(deg: float) -> float:
     return deg / 180 * math.pi
         
+def get_orbital_period(instance: Instance) -> int:
+    """Returns the orbital period of a satellite in seconds"""
+    ephem_obj = ephem.readtle(
+        instance.extra[EX_TLE0_KEY],
+        instance.extra[EX_TLE1_KEY],
+        instance.extra[EX_TLE2_KEY],
+    )
+    return int(24*3600/ephem_obj.n)
+
+def get_ra(instance: Instance) -> float:
+    """Returns the right ascension in degrees"""
+    ephem_obj = ephem.readtle(
+        instance.extra[EX_TLE0_KEY],
+        instance.extra[EX_TLE1_KEY],
+        instance.extra[EX_TLE2_KEY],
+    )
+    return ephem_obj.a_ra/(2*math.pi)*360
+
+def check_orbit_has_coverage(instance: Instance, time:datetime.datetime,
+                             point:Position, distance: int) -> bool:
+    """
+    Checks if the next orbit of the given satellite will cover the given point.
+    Coverage is defined as the satellite being within distance of the point.
+    
+    Calculates all subsequent positions of the satellite from the current
+    date, until the satellite completes an orbit, and evaluates the distance
+    from the point.
+
+    Returns: true if the point is covered, false otherwise.
+    """
+    sat_orbit_period = get_orbital_period(instance)
+    start_date = ephem.Date(time)
+    end_date = start_date + ephem.second*sat_orbit_period
+    sat = ephem.readtle(
+            instance.extra[EX_TLE0_KEY],
+            instance.extra[EX_TLE1_KEY],
+            instance.extra[EX_TLE2_KEY],
+        )
+    while start_date < end_date:
+        sat.compute(start_date)
+        dist = distance_meter(Position(sat.sublat, sat.sublong), point)
+        if dist < distance: return True
+        start_date += ephem.second*60   # Advance 1min at a time
+    return False
+
 def calculate_postion(instance: Instance,time:datetime.datetime) -> Position:
     ret = Position()
     if instance.type == TYPE_SATELLITE and instance.start:

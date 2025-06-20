@@ -3,10 +3,10 @@ from opensn.utils.tools import object2dict
 
 class Position:
 
-    def __init__(self):
-        self.latitude: float = 0
-        self.longitude: float = 0
-        self.altitude: float = 0
+    def __init__(self, latitude: float=0, longitude: float=0, altitude: float=0):
+        self.latitude = latitude
+        self.longitude = longitude
+        self.altitude = altitude
 
 def position_from_json(seq: str) -> Position:
     position = Position()

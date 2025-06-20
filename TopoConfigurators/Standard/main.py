@@ -4,10 +4,10 @@ from opensn.model.position import Position
 from opensn.const.dict_fields import PARAMETER_KEY_CONNECT,PARAMETER_KEY_DELAY,PARAMETER_KEY_BANDWIDTH,PARAMETER_KEY_LOSS
 from opensn.model.link import LinkBase
 from opensn.utils.tools import dec2ra
-from config import ADDR,PORT,STARTTIME
+import config
 from datetime import datetime, timedelta
-from trajectory import calculate_postion,distance_meter,select_closest_satellite,get_propagation_delay_s
-from instance_types import TYPE_GROUND_STATION, TYPE_SATELLITE, EX_ORBIT_INDEX,EX_ALTITUDE_KEY,EX_LATITUDE_KEY,EX_LONGITUDE_KEY, EX_AREA_KEY
+from trajectory import calculate_postion,distance_meter,select_closest_satellite,get_propagation_delay_s, get_orbital_period, get_ra,check_orbit_has_coverage
+from instance_types import TYPE_GROUND_STATION, TYPE_SATELLITE, EX_ORBIT_INDEX,EX_ALTITUDE_KEY,EX_LATITUDE_KEY,EX_LONGITUDE_KEY, EX_AREA_KEY, EX_TLE0_KEY
 from address_type import LINK_V4_ADDR_KEY
 from time import sleep
 from address_allocator import alloc_ipv4,format_ipv4
@@ -48,11 +48,24 @@ if __name__ == "__main__":
 
     instance_config_updated:dict[str,str] = {}
     
-    cli = EmulatorOperator(ADDR,PORT)
+    cli = EmulatorOperator(config.ADDR,config.PORT)
 
-    if STARTTIME != "":
-        time_now = datetime.strptime(STARTTIME, "%Y-%m-%d-%H:%M:%S")
+    orbit_time = 0
+    if config.STARTTIME != "":
+        time_now = datetime.strptime(config.STARTTIME, "%Y-%m-%d-%H:%M:%S")
+        orbit_time = time_now
 
+    bound_threshold = 0
+    if config.BOUNDTHRESHOLD != "":
+        bound_threshold = int(config.BOUNDTHRESHOLD)
+    bound_target = None
+    if config.BOUNDTARGET != "":
+        long_s, lat_s = config.BOUNDTARGET.split(',')
+        b_long = float(long_s)
+        b_lat = float(lat_s)
+        bound_target = Position(b_lat, b_long, 0)
+
+    first_sat = None
     # Create Emulator Operator
     while True:
         node_list = cli.get_node_map()
@@ -62,6 +75,9 @@ if __name__ == "__main__":
         for node_index,node in node_list.items():
             instance_map = cli.get_instance_map(node_index)
             for instance_id,instance in instance_map.items():
+                # Find the first satellite (NODE_0_0)
+                if instance.extra[EX_TLE0_KEY] == "NODE_0_0":
+                    first_sat = instance
                 all_instance_map[instance_id] = instance
                 if instance.type == TYPE_GROUND_STATION:
                     ground_station_list.append(instance)
@@ -93,8 +109,23 @@ if __name__ == "__main__":
                 
 
         position_map: dict[str,Position] = {"":Position()}
-        if STARTTIME == "":
+        if config.STARTTIME == "":
             time_now = datetime.now()
+        # ---- Bounding box implementation
+        # If the distance between an orbit and a target point
+        # is greater than the bound threshold, remove and add another orbit.
+        if bound_threshold > 0 and bound_target is not None:
+            orbital_period = get_orbital_period(first_sat)
+            if time_now > orbit_time + timedelta(seconds=orbital_period):
+                orbit_time = time_now
+                if not check_orbit_has_coverage(first_sat, time_now, bound_target,
+                                                bound_threshold):
+                    # TODO remove the first orbit
+                    # TODO add a new orbit
+                    print(f"[{time_now}] Lost coverage")
+                else:
+                    print(f"[{time_now}] Still covered")
+
         print(f"[{time_now} Update satellite positions")
         for instance_id,instance_info in all_instance_map.items():
             if instance_info.start:
@@ -208,5 +239,5 @@ if __name__ == "__main__":
             config_map = genenrate_config(cli,instance_info.node_index,instance_id)
             cli.put_instance_config_if_not_exist(instance_info.node_index,instance_id,json.dumps(config_map))
         sleep(step_second)
-        if STARTTIME != "":
+        if config.STARTTIME != "":
             time_now += timedelta(seconds=step_second)
