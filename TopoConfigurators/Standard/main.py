@@ -44,22 +44,38 @@ def genenrate_config(cli:EmulatorOperator,node_index:int,instance_id:str):
             config_map["end_infos"][k]['area'] = another_instance_info.extra[EX_AREA_KEY]
     return config_map
 
-def update_orbit_longitude(cli:EmulatorOperator, instances:list[Instance], orbit_id:int, new_longitude:int):
+def update_orbit_longitude(cli:EmulatorOperator, instances:dict[str,Instance],
+                           orbit_id:int, new_longitude:int,
+                           num_orbits:int):
     """
     Change the TLE of the instance to the new longitude and update the
     instance configuration with the data
+
+    Parameters
+    cli         -- connection to etcd store
+    instances   -- maps satellite names ("NODE_X_Y") to instance. Only satellites
+    orbit_id    -- orbit that must be updated
+    new_longitude- new longitude for the orbit
     """
-    for inst in instances:
-        if inst.type != TYPE_SATELLITE: continue
+    next_orbit_id = (orbit_id+1)%num_orbits
+    prev_orbit_id = (orbit_id-1)%num_orbits
+    # First get all the satellites in the orbit of interest
+    sats = [inst for name, inst in instances.items() if int(name[5]) == orbit_id]
+    for inst in sats:
         name = inst.extra[EX_TLE0_KEY]
-        if int(name.split('_')[1]) == orbit_id:
-            # TODO remove links
-            # Change to the new longitude
-            print(f"Before {inst.extra[EX_TLE2_KEY]}")
-            trajectory.satellite_change_longitude(inst, new_longitude)
-            print(f"After  {inst.extra[EX_TLE2_KEY]}")
-            # Push the new instance to etcd
-            cli.put_instance(inst)
+        # Change to the new longitude
+        trajectory.satellite_change_longitude(inst, new_longitude)
+        # Push the new instance to etcd
+        cli.put_instance(inst)
+        # remove link to next orbit
+        sat_in_orbit = int(name.split('_')[-1])
+        sat_in_nxt_orbit = instances[f"NODE_{next_orbit_id}_{sat_in_orbit}"]
+        cli.disable_link_between(inst.node_index, inst.instance_id,
+                                 inst.node_index, sat_in_nxt_orbit.instance_id)
+        # add links from new previous orbit
+        sat_in_prev_orbit = instances[f"NODE_{prev_orbit_id}_{sat_in_orbit}"]
+        cli.enable_link_between(inst.node_index, inst.instance_id,
+                                inst.node_index, sat_in_prev_orbit.instance_id)
 
 if __name__ == "__main__":
 
@@ -74,27 +90,35 @@ if __name__ == "__main__":
 
     bound_threshold = 0
     if config.BOUNDTHRESHOLD != "":
-        bound_threshold = int(config.BOUNDTHRESHOLD)
+        bound_threshold = int(config.BOUNDTHRESHOLD)*1000
     bound_target = None
     if config.BOUNDTARGET != "":
         long_s, lat_s = config.BOUNDTARGET.split(',')
-        b_long = float(long_s)
-        b_lat = float(lat_s)
+        b_long = float(long_s)/180*math.pi
+        b_lat = float(lat_s)/180*math.pi
         bound_target = Position(b_lat, b_long, 0)
 
-    first_sat = None
+    num_orbits = 3
+    sat_name_inst_map = dict()
+    west_most_orbit = 0
+    last_orbit_long = 270
+    orbit_long_delta = 15
     # Create Emulator Operator
     while True:
         node_list = cli.get_node_map()
         all_instance_map: dict[str,Instance] = {}
         node_link_map: dict[int,dict[str,LinkBase]] = {}
         ground_station_list:list[Instance] = []
+        build_satmap = False
+        if not sat_name_inst_map:
+            build_satmap = True
         for node_index,node in node_list.items():
             instance_map = cli.get_instance_map(node_index)
             for instance_id,instance in instance_map.items():
-                # Find the first satellite (NODE_0_0)
-                if instance.extra[EX_TLE0_KEY] == "NODE_0_0":
-                    first_sat = instance
+                # Build the mapping between satellite name to instance
+                if instance.type == TYPE_SATELLITE:
+                    if build_satmap:
+                        sat_name_inst_map[instance.extra[EX_TLE0_KEY]] = instance
                 all_instance_map[instance_id] = instance
                 if instance.type == TYPE_GROUND_STATION:
                     ground_station_list.append(instance)
@@ -136,17 +160,21 @@ if __name__ == "__main__":
         # Instead we will update the TLE of the satellites from the first
         # orbit.
         if bound_threshold > 0 and bound_target is not None:
-            orbital_period = trajectory.get_orbital_period(first_sat)
-            if time_now > orbit_time + timedelta(seconds=orbital_period):
-                orbit_time = time_now
-                if not trajectory.check_orbit_has_coverage(first_sat, time_now, bound_target,
-                                                bound_threshold):
-                    # TODO remove the first orbit
-                    # TODO add a new orbit
-                    print(f"[{time_now}] Lost coverage. Update orbit")
-                    update_orbit_longitude(cli, all_instance_map.values(), 0, 285)
-                else:
-                    print(f"[{time_now}] Still covered")
+            first_sat = sat_name_inst_map[f"NODE_{west_most_orbit}_0"]
+            #orbital_period = trajectory.get_orbital_period(first_sat)
+            #if time_now > orbit_time + timedelta(seconds=orbital_period):
+            #    orbit_time = time_now
+            if not trajectory.check_orbit_has_coverage(first_sat, time_now, bound_target,
+                                            bound_threshold):
+                last_orbit_long = (last_orbit_long+orbit_long_delta)%360
+                print(f"[{time_now}] Orbit {west_most_orbit} lost coverage. Update orbit long to {last_orbit_long}")
+                update_orbit_longitude(cli, sat_name_inst_map,
+                                       west_most_orbit, last_orbit_long,
+                                       num_orbits)
+                # Update the west-most orbit id
+                west_most_orbit = (west_most_orbit+1)%num_orbits
+            else:
+                print(f"[{time_now}] Still covered")
 
         print(f"[{time_now} Update satellite positions")
         for instance_id,instance_info in all_instance_map.items():
